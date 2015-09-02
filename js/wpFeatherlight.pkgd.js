@@ -1,4 +1,77 @@
 /**
+ * jquery.detectSwipe v2.1.1
+ * jQuery Plugin to obtain touch gestures from iPhone, iPod Touch, iPad and Android
+ * http://github.com/marcandre/detect_swipe
+ * Based on touchwipe by Andreas Waltl, netCU Internetagentur (http://www.netcu.de)
+ */
+(function($) {
+
+  $.detectSwipe = {
+    version: '2.1.1',
+    enabled: 'ontouchstart' in document.documentElement,
+    preventDefault: true,
+    threshold: 20
+  };
+
+  var startX,
+    startY,
+    isMoving = false;
+
+  function onTouchEnd() {
+    this.removeEventListener('touchmove', onTouchMove);
+    this.removeEventListener('touchend', onTouchEnd);
+    isMoving = false;
+  }
+
+  function onTouchMove(e) {
+    if ($.detectSwipe.preventDefault) { e.preventDefault(); }
+    if(isMoving) {
+      var x = e.touches[0].pageX;
+      var y = e.touches[0].pageY;
+      var dx = startX - x;
+      var dy = startY - y;
+      var dir;
+      if(Math.abs(dx) >= $.detectSwipe.threshold) {
+        dir = dx > 0 ? 'left' : 'right'
+      }
+      else if(Math.abs(dy) >= $.detectSwipe.threshold) {
+        dir = dy > 0 ? 'down' : 'up'
+      }
+      if(dir) {
+        onTouchEnd.call(this);
+        $(this).trigger('swipe', dir).trigger('swipe' + dir);
+      }
+    }
+  }
+
+  function onTouchStart(e) {
+    if (e.touches.length == 1) {
+      startX = e.touches[0].pageX;
+      startY = e.touches[0].pageY;
+      isMoving = true;
+      this.addEventListener('touchmove', onTouchMove, false);
+      this.addEventListener('touchend', onTouchEnd, false);
+    }
+  }
+
+  function setup() {
+    this.addEventListener('touchstart', onTouchStart, false);
+  }
+
+  function teardown() {
+    this.removeEventListener('touchstart', onTouchStart);
+  }
+
+  $.event.special.swipe = { setup: setup };
+
+  $.each(['left', 'up', 'down', 'right'], function () {
+    $.event.special['swipe' + this] = { setup: function(){
+      $(this).on('swipe', $.noop);
+    } };
+  });
+})(jQuery);
+
+/**
  * Featherlight - ultra slim jQuery lightbox
  * Version 1.3.3 - http://noelboss.github.io/featherlight/
  *
@@ -541,3 +614,279 @@
 	/* bind featherlight on ready if config autoBind is set */
 	$(document).ready(function(){ Featherlight._onReady(); });
 }(jQuery));
+
+/**
+ * Featherlight Gallery – an extension for the ultra slim jQuery lightbox
+ * Version 1.3.3 - http://noelboss.github.io/featherlight/
+ *
+ * Copyright 2015, Noël Raoul Bossart (http://www.noelboss.com)
+ * MIT Licensed.
+**/
+(function($) {
+	"use strict";
+
+	var warn = function(m) {
+		if(window.console && window.console.warn) {
+			window.console.warn('FeatherlightGallery: ' + m);
+		}
+	};
+
+	if('undefined' === typeof $) {
+		return warn('Too much lightness, Featherlight needs jQuery.');
+	} else if(!$.featherlight) {
+		return warn('Load the featherlight plugin before the gallery plugin');
+	}
+
+	var isTouchAware = ('ontouchstart' in window) || window.DocumentTouch && document instanceof DocumentTouch,
+		jQueryConstructor = $.event && $.event.special.swipeleft && $,
+		hammerConstructor = window.Hammer && function($el){
+			var mc = new window.Hammer.Manager($el[0]);
+			mc.add(new window.Hammer.Swipe());
+			return mc;
+		},
+		swipeAwareConstructor = isTouchAware && (jQueryConstructor || hammerConstructor);
+	if(isTouchAware && !swipeAwareConstructor) {
+		warn('No compatible swipe library detected; one must be included before featherlightGallery for swipe motions to navigate the galleries.');
+	}
+
+	var callbackChain = {
+			afterClose: function(_super, event) {
+					var self = this;
+					self.$instance.off('next.'+self.namespace+' previous.'+self.namespace);
+					if (self._swiper) {
+						self._swiper
+							.off('swipeleft', self._swipeleft) /* See http://stackoverflow.com/questions/17367198/hammer-js-cant-remove-event-listener */
+							.off('swiperight', self._swiperight);
+						self._swiper = null;
+					}
+					return _super(event);
+			},
+			beforeOpen: function(_super, event){
+					var self = this;
+
+					self.$instance.on('next.'+self.namespace+' previous.'+self.namespace, function(event){
+						var offset = event.type === 'next' ? +1 : -1;
+						self.navigateTo(self.currentNavigation() + offset);
+					});
+
+					if (swipeAwareConstructor) {
+						self._swiper = swipeAwareConstructor(self.$instance)
+							.on('swipeleft', self._swipeleft = function()  { self.$instance.trigger('next'); })
+							.on('swiperight', self._swiperight = function() { self.$instance.trigger('previous'); });
+					} else {
+						self.$instance.find('.'+self.namespace+'-content')
+							.append(self.createNavigation('previous'))
+							.append(self.createNavigation('next'));
+					}
+					return _super(event);
+			},
+			onKeyUp: function(_super, event){
+				var dir = {
+					37: 'previous', /* Left arrow */
+					39: 'next'			/* Rigth arrow */
+				}[event.keyCode];
+				if(dir) {
+					this.$instance.trigger(dir);
+					return false;
+				} else {
+					return _super(event);
+				}
+			}
+		};
+
+	function FeatherlightGallery($source, config) {
+		if(this instanceof FeatherlightGallery) {  /* called with new */
+			$.featherlight.apply(this, arguments);
+			this.chainCallbacks(callbackChain);
+		} else {
+			var flg = new FeatherlightGallery($.extend({$source: $source, $currentTarget: $source.first()}, config));
+			flg.open();
+			return flg;
+		}
+	}
+
+	$.featherlight.extend(FeatherlightGallery, {
+		autoBind: '[data-featherlight-gallery]'
+	});
+
+	$.extend(FeatherlightGallery.prototype, {
+		/** Additional settings for Gallery **/
+		previousIcon: '&#9664;',     /* Code that is used as previous icon */
+		nextIcon: '&#9654;',         /* Code that is used as next icon */
+		galleryFadeIn: 100,          /* fadeIn speed when image is loaded */
+		galleryFadeOut: 300,         /* fadeOut speed before image is loaded */
+
+		slides: function() {
+			if (this.filter) {
+				return this.$source.find(this.filter);
+			}
+			return this.$source;
+		},
+
+		images: function() {
+			warn('images is deprecated, please use slides instead');
+			return this.slides();
+		},
+
+		currentNavigation: function() {
+			return this.slides().index(this.$currentTarget);
+		},
+
+		navigateTo: function(index) {
+			var self = this,
+				source = self.slides(),
+				len = source.length,
+				$inner = self.$instance.find('.' + self.namespace + '-inner');
+			index = ((index % len) + len) % len; /* pin index to [0, len[ */
+
+			self.$currentTarget = source.eq(index);
+			self.beforeContent();
+			return $.when(
+				self.getContent(),
+				$inner.fadeTo(self.galleryFadeOut,0.2)
+			).always(function($newContent) {
+					self.setContent($newContent);
+					self.afterContent();
+					$newContent.fadeTo(self.galleryFadeIn,1);
+			});
+		},
+
+		createNavigation: function(target) {
+			var self = this;
+			return $('<span title="'+target+'" class="'+this.namespace+'-'+target+'"><span>'+this[target+'Icon']+'</span></span>').click(function(){
+				$(this).trigger(target+'.'+self.namespace);
+			});
+		}
+	});
+
+	$.featherlightGallery = FeatherlightGallery;
+
+	/* extend jQuery with selector featherlight method $(elm).featherlight(config, elm); */
+	$.fn.featherlightGallery = function(config) {
+		return FeatherlightGallery.attach(this, config);
+	};
+
+	/* bind featherlight on ready if config autoBind is set */
+	$(document).ready(function(){ FeatherlightGallery._onReady(); });
+
+}(jQuery));
+
+/**
+ * WP Featherlight - Loader and helpers for the Featherlight WordPress plugin
+ *
+ * @copyright Copyright 2015, WP Site Care (http://www.wpsitecare.com)
+ * @license   MIT
+ */
+(function( window, $, undefined ) {
+	'use strict';
+
+	var $body = $( 'body' );
+
+	/**
+	 * Checks href targets to see if a given anchor is linking to an image.
+	 *
+	 * @since  0.1.0
+	 * @return mixed
+	 */
+	function testImages( index, element ) {
+		return /(png|jpg|jpeg|gif|tiff|bmp)$/.test(
+			$( element ).attr( 'href' ).toLowerCase().split( '?' )[0].split( '#' )[0]
+		);
+	}
+
+	/**
+	 * Filters all href elements on a page to add Featherlight's data attribute.
+	 * When a match is found, the data attribute is added so Featherlight will
+	 * open it normally.
+	 *
+	 * @since  0.1.0
+	 * @return void
+	 */
+	function findImages() {
+		$( 'a[href]' ).filter( testImages ).attr( 'data-featherlight', 'image' );
+	}
+
+	/**
+	 * Callback function to initialize Featherlight galleries when they contain
+	 * items that are able to be opened in a light box.
+	 *
+	 * @since  0.1.0
+	 * @return void
+	 */
+	function buildGalleries( index, element ) {
+		var $galleryObj   = $( element ),
+			$galleryItems = $galleryObj.find( '.gallery-item a' );
+
+		if ( 0 === $galleryItems.length ) {
+			$galleryItems = $galleryObj.find( '.tiled-gallery-item a' );
+		}
+
+		if ( ! $galleryItems.attr( 'data-featherlight' ) ) {
+			return;
+		}
+
+		$galleryItems.featherlightGallery();
+	}
+
+	/**
+	 * Finds and creates Featherlight galleries for WordPress image galleries.
+	 *
+	 * @since  0.1.0
+	 * @return void
+	 */
+	function findGalleries() {
+		var $gallery = $( '.gallery, .tiled-gallery' );
+
+		if ( 0 === $gallery.length ) {
+			return;
+		}
+
+		$.each( $gallery, buildGalleries );
+	}
+
+	/**
+	 * Append image captions to the Featherlight content <div>.
+	 *
+	 * @since  0.3.0
+	 * @return void
+	 */
+	function addCaptions() {
+		$.featherlight.prototype.afterContent = function() {
+			var object    = this.$instance,
+				target    = this.$currentTarget,
+				parent    = target.parent(),
+				caption   = parent.find( '.wp-caption-text' ),
+				galParent = target.parents( '.gallery-item' ),
+				jetParent = target.parents( '.tiled-gallery-item' );
+
+			if ( 0 !== galParent.length ) {
+				caption = galParent.find( '.wp-caption-text' );
+			} else if ( 0 !== jetParent.length ) {
+				caption = jetParent.find( '.tiled-gallery-caption' );
+			}
+
+			object.find( '.caption' ).remove();
+			if ( 0 !== caption.length ) {
+				$( '<div class="caption">' ).text( caption.text() ).appendTo( object.find( '.featherlight-content' ) );
+			}
+		};
+	}
+
+	/**
+	 * Fires all of our helper methods to load featherlight.
+	 *
+	 * @since  0.1.0
+	 * @return void
+	 */
+	function wpFeatherlightInit() {
+		findImages();
+		findGalleries();
+		if ( $body.hasClass( 'wp-featherlight-captions' ) ) {
+			addCaptions();
+		}
+	}
+
+	$( document ).ready(function() {
+		wpFeatherlightInit();
+	});
+})( this, jQuery );
